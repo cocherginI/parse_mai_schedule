@@ -1,39 +1,47 @@
 import requests
 from lxml import html
 import sqlite3
+import time
+from functools import lru_cache
 
 # URL страницы с расписанием
 url = "https://mai.ru/education/studies/schedule/groups.php"
 
-# Функция для парсинга списка институтов
-def parse_institutes():
+# Кешируем результат парсинга
+@lru_cache(maxsize=1)
+def fetch_html():
     response = requests.get(url)
-    
     if response.status_code != 200:
         raise Exception(f"Ошибка загрузки страницы: {response.status_code}")
+    return response.content
+
+# Функция для парсинга списка институтов
+def parse_institutes(update_progress=None):
+    content = fetch_html()  # Получаем HTML (с кешированием)
+    tree = html.fromstring(content)
     
-    # Парсим содержимое страницы
-    tree = html.fromstring(response.content)
-    
-    # Используем XPath для поиска списка институтов
     institutes = tree.xpath('/html/body/main/div/div/div[1]/article/form/div/div[1]/select/option')
-    
-    # Извлекаем данные (id и название института)
     institute_data = []
-    for institute in institutes[1:]: # Пропускаем первое
+    
+    total_institutes = len(institutes)
+    for idx, institute in enumerate(institutes):
         institute_id = institute.get('value')
         institute_name = institute.text.strip()
         if institute_id:  # Пропускаем пустые элементы
             institute_data.append((institute_id, institute_name))
+        
+        # Обновляем прогресс
+        if update_progress:
+            update_progress(idx + 1, total_institutes)
+        time.sleep(0.1)  # Для имитации долгого процесса
     
     return institute_data
 
-# Функция для создания таблицы "institutes" и записи данных в базу
+# Функция для записи институтов в базу данных
 def save_institutes_to_db(institute_data):
     conn = sqlite3.connect('schedule.db')
     cursor = conn.cursor()
     
-    # Создаем таблицу, если она не существует
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS institutes (
             id TEXT PRIMARY KEY,
@@ -41,24 +49,8 @@ def save_institutes_to_db(institute_data):
         )
     ''')
     
-    # Очищаем таблицу перед записью новых данных
     cursor.execute('DELETE FROM institutes')
-    
-    # Добавляем данные в таблицу
     cursor.executemany('INSERT INTO institutes (id, name) VALUES (?, ?)', institute_data)
     
     conn.commit()
     conn.close()
-
-# Основная функция для парсинга и записи в базу
-def run_parsing():
-    try:
-        institutes = parse_institutes()
-        save_institutes_to_db(institutes)
-        print(f"Успешно записано {len(institutes)} институтов в базу данных.")
-    except Exception as e:
-        print(f"Ошибка: {e}")
-
-# Точка входа
-if __name__ == "__main__":
-    run_parsing()
