@@ -46,7 +46,7 @@ def parse_institutes(update_progress=None):
         
         # Если институт еще не сохранен, добавляем его в список для добавления в БД
         if institute_id and institute_id not in saved_institute_ids:
-            institute_data.append((institute_name))
+            institute_data.append((idx,institute_name))
             progress += 1  # Увеличиваем прогресс
         
         # Обновляем прогрессбар
@@ -64,12 +64,13 @@ def save_institutes_to_db(institute_data):
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS institutes (
+            id INTEGER,
             name TEXT PRIMARY KEY
         )
     ''')
     print(institute_data)
     cursor.execute('DELETE FROM institutes')
-    cursor.executemany('INSERT INTO institutes (name) VALUES (?)', institute_data)
+    cursor.executemany('INSERT INTO institutes (id, name) VALUES (?, ?)', institute_data)
     
     conn.commit()
     conn.close()
