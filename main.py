@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import sqlite3
 import threading
 import queue
+from lib import get_saved_institutes
 import parser  # Импортируем модуль с парсингом
 
 # Очередь для передачи прогресса между потоками
@@ -30,14 +31,40 @@ def update_progress(progress, total):
 def run_parsing():
     try:
         institutes = parser.parse_institutes(update_progress)
-        parser.save_institutes_to_db(institutes)
-        messagebox.showinfo("Парсинг", "Институты успешно добавлены в базу данных!")
+        if institutes:
+            parser.save_institutes_to_db(institutes)
+            messagebox.showinfo("Парсинг", "Институты успешно добавлены в базу данных!")
+        else:
+            messagebox.showinfo("Парсинг", "Все институты уже добавлены в базу данных!")
     except Exception as e:
         messagebox.showerror("Ошибка", str(e))
 
 # Функция для запуска парсинга в потоке
 def start_parsing_thread():
     threading.Thread(target=run_parsing).start()
+    messagebox.showinfo("Парсинг", "Парсинг институтов запущен!")
+
+# Обновление прогрессбара при инициализации
+def init_progress_bar():
+    saved_institutes = get_saved_institutes()
+    total_institutes = len(saved_institutes)
+    
+    if total_institutes > 0:
+        for idx in range(total_institutes):
+            progress_var.set(idx + 1)
+            progress_bar["maximum"] = total_institutes
+            progress_label.config(text=f"Прогресс: {idx + 1}/{total_institutes}")
+
+# Функция для показа сохраненных институтов
+def show_saved_institutes():
+    institutes = get_saved_institutes()
+    
+    if institutes:
+        institutes_list = "\n".join([institute[0] for institute in institutes])
+        print(institutes_list)
+        messagebox.showinfo("Сохраненные институты", f"Уже сохраненные институты:\n\n{institutes_list}")
+    else:
+        messagebox.showinfo("Сохраненные институты", "Нет сохраненных институтов в базе данных.")
 
 # Функция для получения расписания группы на неделю
 def get_schedule(group, week):
@@ -96,6 +123,12 @@ def create_database():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS institutes (
+            name TEXT PRIMARY KEY
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -132,9 +165,11 @@ progress_label = tk.Label(root, text="Прогресс: 0/0")
 progress_label.grid(row=5, column=0, columnspan=2)
 
 # Кнопка для запуска парсинга
-parse_button = tk.Button(root, text="Парсинг институтов", command=start_parsing_thread)
+parse_button = tk.Button(root, text="Парсинг институтов", command=lambda: [show_saved_institutes(), start_parsing_thread()])
 parse_button.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
 
+# Вызов при инициализации
+init_progress_bar()
 # Обновление прогресс бара
 update_progress_bar()
 
