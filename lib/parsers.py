@@ -42,31 +42,30 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager  # автоматическая установка chromedriver
 from lib.db import save_schedule_to_db
-
 # Настройки Selenium
 chrome_options = Options()
-chrome_options.add_argument("--headless")  # Запуск в фоновом режиме
+# chrome_options.add_argument("--headless")  # Запуск в фоновом режиме
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
 
 from chromedriver_py import binary_path # this will get you the path variable
 
-svc = webdriver.ChromeService(executable_path=binary_path)
-driver = webdriver.Chrome(service=svc, options=chrome_options)
-
 # Функция парсинга расписания для одной группы на конкретную неделю
 def parse_schedule(group_name, week):
     schedule_data = []
     url = f"https://mai.ru/education/studies/schedule/index.php?group={group_name}&week={week}"
-
+    svc = webdriver.ChromeService(executable_path=binary_path)
+    driver = webdriver.Chrome(service=svc, options=chrome_options)
     try:
         # Переход на страницу
         driver.get(url)
-
-        # Ожидание загрузки элементов
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.XPATH, '//li[contains(@class, "step-item")]'))
-        )
+        import time
+        time.sleep(0.1)  # Имитируем длительную операцию
+        driver.get(url)
+        # # Ожидание загрузки элементов
+        # WebDriverWait(driver, 20).until(
+        #     EC.presence_of_element_located((By.XPATH, '//li[contains(@class, "step-item")]'))
+        # )
 
         # Находим элементы для каждого дня
         day_elements = driver.find_elements(By.XPATH, '//li[contains(@class, "step-item")]')
@@ -80,7 +79,7 @@ def parse_schedule(group_name, week):
             
             for lesson in lesson_elements:
                 # Время занятия
-                time = lesson.find_element(By.XPATH, './/li[contains(@class, "list-inline-item")]').text.strip()
+                _time = lesson.find_element(By.XPATH, './/li[contains(@class, "list-inline-item")]').text.strip()
 
                 # Название предмета
                 subject = lesson.find_element(By.XPATH, './/p[contains(@class, "fw-semi-bold text-dark")]').text.strip()
@@ -90,11 +89,13 @@ def parse_schedule(group_name, week):
                 teacher = teacher_elements[0].text.strip() if teacher_elements else "Преподаватель не указан"
 
                 # Аудитория
-                room_elements = lesson.find_elements(By.XPATH, './/li[contains(@class, "list-inline-item")]/i[contains(@class, "fa-map-marker-alt")]/following-sibling::text()')
-                room = room_elements[0].strip() if room_elements else "Аудитория не указана"
+                # Аудитория
+                room_element = lesson.find_element(By.XPATH, './/li[contains(@class, "list-inline-item") and .//i[contains(@class, "fa-map-marker-alt")]]')
+                room = room_element.text if room_element else "Аудитория не указана"
+
 
                 # Добавляем данные в список для записи в БД
-                schedule_data.append((group_name, week, day, time, subject, teacher, room))
+                schedule_data.append((group_name, week, day, _time, subject, teacher, room))
 
     except Exception as e:
         print(f"Ошибка парсинга страницы для группы {group_name}, неделя {week}: {e}")
@@ -102,7 +103,8 @@ def parse_schedule(group_name, week):
     finally:
         # Закрытие браузера
         driver.quit()
-
+    if not schedule_data:
+        raise Exception('Расписание пустое. Проверьте номер группы')
     # Сохраняем данные в базу данных
     save_schedule_to_db(schedule_data)
     return schedule_data

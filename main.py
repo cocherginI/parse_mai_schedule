@@ -10,17 +10,21 @@ create_db()
 
 # Функция для показа расписания
 def show_schedule():
-    group = group_entry.get()
+    group = group_entry.get().strip()
     week = week_entry.get()
 
     if not group:
         messagebox.showerror("Ошибка", "Пожалуйста, выберите группу.")
         return
-    
+    schedule_tree.delete(*schedule_tree.get_children())
     try:
         schedule_data = fetch_schedule(group, week)
         for row in schedule_data:
-            schedule_tree.insert("", "end", values=row)
+            _time = f'{row[2]} {row[3]}'
+            subject = row[4]
+            teacher = row[5]
+            room = row[6] 
+            schedule_tree.insert("", "end", values=(_time, subject, teacher, room))
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось загрузить расписание: {str(e)}")
 

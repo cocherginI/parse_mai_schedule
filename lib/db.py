@@ -100,8 +100,7 @@ def get_groups_for_institute(institute_name):
 def save_schedule_to_db(schedules):
     conn = sqlite3.connect('schedule.db')
     cursor = conn.cursor()
-    
-    cursor.execute('''
+    cursor.executemany('''
         INSERT OR IGNORE INTO schedule (group_name, week, day, time, subject, teacher, room) VALUES (?, ?, ?, ?, ?, ?, ?)
     ''', schedules)
     
