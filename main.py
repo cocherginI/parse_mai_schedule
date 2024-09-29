@@ -1,177 +1,135 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import sqlite3
-import threading
-import queue
-from lib import get_saved_institutes
-import parser  # Импортируем модуль с парсингом
+from threading import Thread
+from lib.parsers import parse_groups_for_institute, parse_institutes
+from lib.db import create_db, get_saved_institutes, get_groups_for_institute
+from lib.schedule import fetch_schedule
 
-# Очередь для передачи прогресса между потоками
-progress_queue = queue.Queue()
+# Инициализация базы данных
+create_db()
 
-# Функция для отображения прогресса
-def update_progress_bar():
-    try:
-        while True:
-            progress, total = progress_queue.get_nowait()
-            progress_var.set(progress)
-            progress_bar["maximum"] = total
-            progress_label.config(text=f"Прогресс: {progress}/{total}")
-            if progress >= total:
-                break
-    except queue.Empty:
-        pass
-    root.after(100, update_progress_bar)
-
-# Функция для обновления прогресса из парсера
-def update_progress(progress, total):
-    progress_queue.put((progress, total))
-
-# Функция для выполнения парсинга в отдельном потоке
-def run_parsing():
-    try:
-        institutes = parser.parse_institutes(update_progress)
-        if institutes:
-            parser.save_institutes_to_db(institutes)
-            messagebox.showinfo("Парсинг", "Институты успешно добавлены в базу данных!")
-        else:
-            messagebox.showinfo("Парсинг", "Все институты уже добавлены в базу данных!")
-    except Exception as e:
-        messagebox.showerror("Ошибка", str(e))
-
-# Функция для запуска парсинга в потоке
-def start_parsing_thread():
-    threading.Thread(target=run_parsing).start()
-    messagebox.showinfo("Парсинг", "Парсинг институтов запущен!")
-
-# Обновление прогрессбара при инициализации
-def init_progress_bar():
-    saved_institutes = get_saved_institutes()
-    total_institutes = len(saved_institutes)
-    
-    if total_institutes > 0:
-        for idx in range(total_institutes):
-            progress_var.set(idx + 1)
-            progress_bar["maximum"] = total_institutes
-            progress_label.config(text=f"Прогресс: {idx + 1}/{total_institutes}")
-
-# Функция для показа сохраненных институтов
-def show_saved_institutes():
-    institutes = get_saved_institutes()
-    
-    if institutes:
-        institutes_list = "\n".join([institute[0] for institute in institutes])
-        print(institutes_list)
-        messagebox.showinfo("Сохраненные институты", f"Уже сохраненные институты:\n\n{institutes_list}")
-    else:
-        messagebox.showinfo("Сохраненные институты", "Нет сохраненных институтов в базе данных.")
-
-# Функция для получения расписания группы на неделю
-def get_schedule(group, week):
-    conn = sqlite3.connect('schedule.db')
-    cursor = conn.cursor()
-
-    # Проверяем, есть ли группа
-    cursor.execute('SELECT * FROM schedules WHERE group_id=? AND week=?', (group, week))
-    schedule = cursor.fetchall()
-    conn.close()
-
-    return schedule
-
-# Функция для отображения расписания
+# Функция для показа расписания
 def show_schedule():
     group = group_entry.get()
     week = week_entry.get()
 
-    if not group or not week:
-        messagebox.showerror("Ошибка", "Пожалуйста, введите группу и неделю!")
+    if not group:
+        messagebox.showerror("Ошибка", "Пожалуйста, выберите группу.")
         return
-
-    schedule = get_schedule(group, week)
     
-    if not schedule:
-        messagebox.showinfo("Расписание", "Расписание не найдено.")
-    else:
-        # Очищаем текущее содержимое поля с расписанием
-        schedule_text.delete(1.0, tk.END)
-        schedule_text.insert(tk.END, f"Расписание для группы {group} на неделю {week}:\n\n")
-        for day, subject, time in schedule:
-            schedule_text.insert(tk.END, f"{day}: {subject} в {time}\n")
+    try:
+        schedule_data = fetch_schedule(group, week)
+        for row in schedule_data:
+            schedule_tree.insert("", "end", values=row)
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось загрузить расписание: {str(e)}")
 
-# Функция для создания таблиц базы данных
-def create_database():
-    conn = sqlite3.connect('schedule.db')
-    cursor = conn.cursor()
+# Функция для обновления прогресс-бара в главном потоке
+def update_progress_in_main(progress, total, bar, label, text):
+    root.after(0, update_progress, progress, total, bar, label, text)
 
-    # Создание таблицы для расписаний
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS schedules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT,
-            week INTEGER,
-            day TEXT,
-            subject TEXT,
-            time TEXT
-        )
-    ''')
+# Функция для обновления прогресс-бара
+def update_progress(progress, total, bar, label, text):
+    bar["value"] = progress
+    bar["maximum"] = total
+    label.config(text=f"{text}: {progress}/{total}")
 
-    # Создание таблицы для институтов
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS institutes (
-            id TEXT PRIMARY KEY,
-            name TEXT
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS institutes (
-            name TEXT PRIMARY KEY
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-
-# Создаем базу данных при запуске программы
-create_database()
-
-# Создание основного окна
+# Инициализация интерфейса
 root = tk.Tk()
-root.title("Расписание")
+root.title("Парсинг Институтов и Групп, Просмотр Расписания")
 
-# Поля для ввода группы и недели
-tk.Label(root, text="Группа").grid(row=0, column=0, padx=10, pady=10)
+# Виджеты для института
+tk.Label(root, text="Институт").grid(row=0, column=0, padx=10, pady=10)
+institute_combobox = ttk.Combobox(root)
+institute_combobox.grid(row=0, column=1, padx=10, pady=10)
+
+# Виджеты для группы
+tk.Label(root, text="Группа").grid(row=1, column=0, padx=10, pady=10)
 group_entry = tk.Entry(root)
-group_entry.grid(row=0, column=1, padx=10, pady=10)
+group_entry.grid(row=1, column=1, padx=10, pady=10)
 
-tk.Label(root, text="Неделя").grid(row=1, column=0, padx=10, pady=10)
+# Поле для недели
+tk.Label(root, text="Неделя").grid(row=2, column=0, padx=10, pady=10)
 week_entry = tk.Entry(root)
-week_entry.grid(row=1, column=1, padx=10, pady=10)
+week_entry.grid(row=2, column=1, padx=10, pady=10)
 
 # Кнопка для показа расписания
-search_button = tk.Button(root, text="Показать расписание", command=show_schedule)
-search_button.grid(row=2, column=0, columnspan=2, padx=10, pady=10)
+schedule_button = tk.Button(root, text="Показать расписание", command=show_schedule)
+schedule_button.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
 
-# Текстовое поле для отображения расписания
-schedule_text = tk.Text(root, height=10, width=50)
-schedule_text.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
+# Таблица для отображения расписания
+schedule_tree = ttk.Treeview(root, columns=("Время", "Предмет", "Преподаватель", "Аудитория"), show="headings")
+schedule_tree.heading("Время", text="Время")
+schedule_tree.heading("Предмет", text="Предмет")
+schedule_tree.heading("Преподаватель", text="Преподаватель")
+schedule_tree.heading("Аудитория", text="Аудитория")
+schedule_tree.grid(row=4, column=0, columnspan=2, padx=10, pady=10)
 
-# Прогрессбар для парсинга
-progress_var = tk.IntVar()
-progress_bar = ttk.Progressbar(root, variable=progress_var)
-progress_bar.grid(row=4, column=0, columnspan=2, padx=10, pady=10)
+# Прогрессбар и текстовые метки
+progress_label = tk.Label(root, text="Загрузка институтов...")
+progress_label.grid(row=5, column=0, columnspan=2, padx=10, pady=10)
 
-progress_label = tk.Label(root, text="Прогресс: 0/0")
-progress_label.grid(row=5, column=0, columnspan=2)
+progress_bar = ttk.Progressbar(root, orient="horizontal", length=300, mode="determinate")
+progress_bar.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
 
-# Кнопка для запуска парсинга
-parse_button = tk.Button(root, text="Парсинг институтов", command=lambda: [show_saved_institutes(), start_parsing_thread()])
-parse_button.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
+# Функция инициализации интерфейса
+def initialize_interface():
+    institutes = get_saved_institutes()
+    
+    if institutes:
+        institute_combobox['values'] = [inst[1] for inst in institutes]
+        if institutes:
+            institute_combobox.current(0)
+        # Обновляем прогресс для уже сохраненных институтов
+        update_progress_in_main(len(institutes), len(institutes), progress_bar, progress_label, "Загрузка институтов")
+        
+        # Параллельно продолжаем парсинг групп и расписания
+        # for institute in institutes[1:]:
+        #     institute = (None, institute[1].replace(' ', '+'))
+        #     thread = Thread(target=parse_groups_and_schedule, args=(institute))
+        #     thread.start()
+    else:
+        messagebox.showinfo("Парсинг", "Институты не найдены. Запускаем парсинг...")
 
-# Вызов при инициализации
-init_progress_bar()
-# Обновление прогресс бара
-update_progress_bar()
+        # Запускаем парсинг в отдельном потоке
+        thread = Thread(target=parse_institutes_and_groups)
+        thread.start()
 
-# Запуск основного цикла
+# Основная функция парсинга институтов, групп и расписания
+def parse_institutes_and_groups():
+    try:
+        institutes = get_saved_institutes()
+        if not institutes:
+            # Парсинг институтов
+            institutes = parse_institutes(lambda p, t: update_progress_in_main(p, t, progress_bar, progress_label, "Загрузка институтов"))
+
+        # Параллельно парсим группы и расписание
+        for institute in institutes:
+            groups = get_groups_for_institute(institute)
+            if not groups:
+                parse_groups_and_schedule(None, institute)
+
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при парсинге: {e}")
+
+# Парсинг групп и расписания
+def parse_groups_and_schedule(self, institute):
+    try:
+        # Парсинг групп
+        # parse_groups_for_institute(institute)
+        
+        # # Парсинг расписания
+        # parse_schedule_for_all_groups(lambda p, t: update_progress_in_main(p, t, progress_bar, progress_label, "Загрузка расписания"))
+        groups = get_groups_for_institute(institute)
+        if not groups:        
+            messagebox.showinfo("Парсинг", "Все данные успешно загружены.")
+
+
+        messagebox.showinfo("Парсинг", "Все данные успешно загружены.")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при парсинге: {e}")
+
+# Инициализация интерфейса
+initialize_interface()
+
 root.mainloop()
